@@ -1,26 +1,80 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>화학물질 MSDS 검색</title>
+    <title>화학 물질 MSDS 검색</title>
     <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-        #camera-container { width: 300px; height: 225px; border: 1px solid black; margin-bottom: 10px; }
-        #camera-view { width: 100%; height: 100%; }
-        #capture-btn, #tts-btn { padding: 10px 20px; margin: 5px; cursor: pointer; }
-        #result { margin-top: 20px; font-weight: bold; }
-        #msds-info { margin-top: 10px; border: 1px solid #ccc; padding: 10px; width: 80%; max-width: 500px; }
-        #msds-info h2 { margin-top: 0; }
-        .hidden { display: none; }
-        #loading { display: none; margin-top: 20px; font-style: italic; color: gray; }
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #camera-container {
+            width: 400px; /* 변경: 더 큰 크기로 설정 */
+            height: 300px; /* 변경: 더 큰 크기로 설정 */
+            border: 1px solid black;
+            margin-bottom: 10px;
+            position: relative;
+        }
+
+        #camera-view {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background-color: #eee;
+        }
+
+        #capture-btn,
+        #tts-btn {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+
+        #result {
+            margin-top: 20px;
+            font-weight: bold;
+        }
+
+        #msds-info {
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            width: 80%;
+            max-width: 500px;
+        }
+
+        #msds-info h2 {
+            margin-top: 0;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #loading {
+            display: none;
+            margin-top: 20px;
+            font-style: italic;
+            color: gray;
+        }
+
+        #creator-info {
+            margin-top: 30px;
+            font-size: 0.8em;
+            color: #777;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
-    <h1>화학물질 MSDS 검색</h1>
+    <h1>화학 물질 MSDS 검색</h1>
 
     <p>NFC 태그를 스캔하여 이 페이지에 접속하셨습니다.</p>
 
     <div id="camera-container">
-        <video id="camera-view" autoplay playsinline></video>
+        <canvas id="camera-view"></canvas>
     </div>
     <div>
         <button id="capture-btn">사진 촬영 및 검색</button>
@@ -34,9 +88,13 @@
         <div id="msds-content"></div>
     </div>
 
+    <div id="creator-info">
+        Made by 박박박
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
     <script>
-        let video = document.getElementById('camera-view');
+        let cameraView = document.getElementById('camera-view');
         let captureBtn = document.getElementById('capture-btn');
         let ttsBtn = document.getElementById('tts-btn');
         let resultDiv = document.getElementById('result');
@@ -46,6 +104,7 @@
         let model;
         let metadata;
         let currentChemicalName = '';
+        let cameraStream;
 
         const speechUtterance = new SpeechSynthesisUtterance();
         speechUtterance.lang = 'ko-KR';
@@ -75,8 +134,25 @@
         async function setupCamera() {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    video.srcObject = stream;
+                    let facingMode = 'user';
+                    const userAgent = navigator.userAgent;
+                    if (!/Android|iPhone|iPad|iPod/i.test(userAgent)) {
+                        facingMode = 'environment';
+                    }
+
+                    cameraStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: facingMode }
+                    });
+                    cameraView.width = 400;  // 변경: 캔버스 크기를 #camera-container와 일치시킵니다.
+                    cameraView.height = 300; // 변경: 캔버스 크기를 #camera-container와 일치시킵니다.
+                    const context = cameraView.getContext('2d');
+                    function drawFrame() {
+                        if (cameraStream) {
+                            context.drawImage(cameraStream, 0, 0, cameraView.width, cameraView.height);
+                            requestAnimationFrame(drawFrame);
+                        }
+                    }
+                    drawFrame();
                 } catch (error) {
                     console.error('카메라 접근 실패:', error);
                     resultDiv.innerText = '카메라 접근에 실패했습니다.';
@@ -98,11 +174,13 @@
             ttsBtn.classList.add('hidden');
 
             const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.width = cameraView.width;
+            canvas.height = cameraView.height;
             const context = canvas.getContext('2d');
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            context.drawImage(cameraView, 0, 0, canvas.width, canvas.height);
             const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+
+
             const tensor = tf.browser.fromPixels(imageData).expandDims(0).toFloat();
             const normalizedTensor = tensor.div(255);
 
@@ -125,11 +203,8 @@
             } else {
                 msdsContentDiv.innerText = '해당 화학물질의 MSDS 정보가 없습니다.';
                 msdsInfoDiv.classList.remove('hidden');
-                ttsBtn.classList.add('hidden'); // 정보 없을 땐 TTS 버튼 숨김
+                ttsBtn.classList.add('hidden');
             }
-
-            // 촬영 후 카메라 스트림 중지 (선택 사항)
-            // video.srcObject.getVideoTracks().forEach(track => track.stop());
         });
 
         ttsBtn.addEventListener('click', () => {
@@ -153,9 +228,16 @@
         });
 
         window.onload = async () => {
-            await setupCamera();
             await loadModel();
+            await setupCamera();
         };
+
+        window.addEventListener('beforeunload', () => {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+        });
     </script>
 </body>
 </html>
