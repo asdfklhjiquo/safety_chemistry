@@ -15,7 +15,7 @@
             height: 225px;
             border: 1px solid black;
             margin-bottom: 10px;
-            position: relative; /* Canvas를 위한 상대 위치 설정 */
+            position: relative;
         }
 
         #camera-view {
@@ -104,7 +104,7 @@
         let model;
         let metadata;
         let currentChemicalName = '';
-        let cameraStream; // 카메라 스트림을 저장할 변수
+        let cameraStream;
 
         const speechUtterance = new SpeechSynthesisUtterance();
         speechUtterance.lang = 'ko-KR';
@@ -134,23 +134,44 @@
         async function setupCamera() {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 try {
-                    cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    // Canvas 크기 설정
+                    const constraints = {
+                        video: {
+                            facingMode: 'environment' // 기본적으로 후면 카메라를 사용
+                        }
+                    };
+                    //userAgent를 확인하여 mobile기기인지 확인하고, mobile일 경우에만 facingMode를 environment로 설정
+                    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                         constraints.video.facingMode =  'environment';
+                    }
+                    else{
+                         constraints.video.facingMode =  'user';
+                    }
+                    cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
                     cameraView.width = 300;
                     cameraView.height = 225;
                     const context = cameraView.getContext('2d');
 
+
                     function drawFrame() {
-                        if (cameraStream) {
-                            // 스트림이 활성화되어 있을 때만 그림
-                            context.drawImage(cameraStream, 0, 0, cameraView.width, cameraView.height);
-                            requestAnimationFrame(drawFrame); // 다음 프레임 요청
+                        if (cameraStream && cameraStream.active) {
+                            try{
+                                context.drawImage(cameraStream, 0, 0, cameraView.width, cameraView.height);
+                                requestAnimationFrame(drawFrame);
+                            }
+                            catch(e){
+                                console.log("error occured while drawing frame", e);
+                            }
+
                         }
                     }
-                    drawFrame(); // 첫 번째 프레임 그리기 시작
+                    drawFrame();
                 } catch (error) {
                     console.error('카메라 접근 실패:', error);
                     resultDiv.innerText = '카메라 접근에 실패했습니다.';
+                     if (cameraStream) {
+                        cameraStream.getTracks().forEach(track => track.stop());
+                        cameraStream = null;
+                    }
                 }
             } else {
                 resultDiv.innerText = '카메라를 지원하지 않는 환경입니다.';
@@ -170,45 +191,45 @@
             msdsInfoDiv.classList.add('hidden');
             ttsBtn.classList.add('hidden');
 
-            // 캔버스에서 이미지 데이터 가져오기
-            const canvas = document.createElement('canvas');
-            canvas.width = cameraView.width;
-            canvas.height = cameraView.height;
-            const context = canvas.getContext('2d');
-            context.drawImage(cameraView, 0, 0, canvas.width, canvas.height);
-            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = cameraView.width;
+                canvas.height = cameraView.height;
+                const context = canvas.getContext('2d');
+                context.drawImage(cameraView, 0, 0, canvas.width, canvas.height);
+                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
 
 
-            const tensor = tf.browser.fromPixels(imageData).expandDims(0).toFloat();
-            const normalizedTensor = tensor.div(255);
+                const tensor = tf.browser.fromPixels(imageData).expandDims(0).toFloat();
+                const normalizedTensor = tensor.div(255);
 
-            const predictions = await model.predict(normalizedTensor).data();
-            const classNames = metadata ? metadata.labels : ['알 수 없음'];
-            const topPredictionIndex = Array.from(predictions).indexOf(Math.max(...predictions));
-            const predictedClassName = classNames[topPredictionIndex];
-            currentChemicalName = predictedClassName;
+                const predictions = await model.predict(normalizedTensor).data();
+                const classNames = metadata ? metadata.labels : ['알 수 없음'];
+                const topPredictionIndex = Array.from(predictions).indexOf(Math.max(...predictions));
+                const predictedClassName = classNames[topPredictionIndex];
+                currentChemicalName = predictedClassName;
 
-            resultDiv.innerText = `예측 결과: ${predictedClassName}`;
-            loadingDiv.style.display = 'none';
+                resultDiv.innerText = `예측 결과: ${predictedClassName}`;
 
-            if (msdsData[predictedClassName]) {
-                msdsContentDiv.innerHTML = `
-                    <p><strong>위험성:</strong> ${msdsData[predictedClassName]['위험성']}</p>
-                    <p><strong>취급 주의:</strong> ${msdsData[predictedClassName]['취급 주의']}</p>
-                `;
-                msdsInfoDiv.classList.remove('hidden');
-                ttsBtn.classList.remove('hidden');
-            } else {
-                msdsContentDiv.innerText = '해당 화학물질의 MSDS 정보가 없습니다.';
-                msdsInfoDiv.classList.remove('hidden');
-                ttsBtn.classList.add('hidden'); // 정보 없을 땐 TTS 버튼 숨김
+
+                if (msdsData[predictedClassName]) {
+                    msdsContentDiv.innerHTML = `
+                        <p><strong>위험성:</strong> ${msdsData[predictedClassName]['위험성']}</p>
+                        <p><strong>취급 주의:</strong> ${msdsData[predictedClassName]['취급 주의']}</p>
+                    `;
+                    msdsInfoDiv.classList.remove('hidden');
+                    ttsBtn.classList.remove('hidden');
+                } else {
+                    msdsContentDiv.innerText = '해당 화학물질의 MSDS 정보가 없습니다.';
+                    msdsInfoDiv.classList.remove('hidden');
+                    ttsBtn.classList.add('hidden'); // 정보 없을 땐 TTS 버튼 숨김
+                }
+            } catch (error) {
+                console.error("이미지 캡쳐 및 분석 오류:", error);
+                resultDiv.innerText = "이미지 캡쳐 및 분석 중 오류가 발생했습니다.  페이지를 새로고침해주세요.";
+            } finally {
+                loadingDiv.style.display = 'none'; // 에러가 발생하더라도 로딩 표시는 숨김
             }
-
-            // 촬영 후 카메라 스트림 중지 (선택 사항) -  스트림을 유지하고,  화면이동시 중지하도록 변경
-            //if (cameraStream) {
-            //    cameraStream.getTracks().forEach(track => track.stop());
-            //    cameraStream = null;
-            //}
         });
 
         ttsBtn.addEventListener('click', () => {
@@ -236,7 +257,6 @@
             await setupCamera();
         };
 
-        // 페이지를 벗어날 때 카메라 스트림 중지
         window.addEventListener('beforeunload', () => {
             if (cameraStream) {
                 cameraStream.getTracks().forEach(track => track.stop());
